@@ -9,14 +9,15 @@ notebook = {
       "source": [
         "# 🎙️ Piper TTS: Персональный офлайн-голос для Android\n",
         "\n",
-        "**Инструкция: Нажмите `Среда выполнения` -> `Выполнить все` (Runtime -> Run all).**\n",
-        "Всё остальное произойдет полностью автоматически без вашего вмешательства:\n",
-        "1. Создается изолированная среда **Python 3.10** через `uv` (гарантирует 100% совместимость с PyTorch Lightning и Piper).\n",
-        "2. Загружается готовый нарезанный датасет (50 фраз, 22050 Гц).\n",
-        "3. Скачивается базовый дикторский чекпоинт `ru_RU-dmitri-medium`.\n",
-        "4. Выполняется автоматическая предобработка (фонетизация через espeak-ng).\n",
-        "5. Запускается дообучение (Fine-Tuning) на GPU T4.\n",
-        "6. Экспортируется готовая модель `my_voice.onnx` (~60 МБ), генерируется тестовый аудиофайл и запускается скачивание на устройство."
+        "**Инструкция:**\n",
+        "1. Убедитесь, что выбран **T4 GPU**: `Среда выполнения` -> `Сменить тип среды выполнения` -> `T4 GPU` -> `Сохранить`.\n",
+        "2. Нажмите `Среда выполнения` -> `Выполнить все` (Runtime -> Run all).\n",
+        "\n",
+        "Обучение выполнится полностью автоматически:\n",
+        "- Создается изолированная среда Python 3.10 с PyTorch и CUDA.\n",
+        "- Загружается датасет из 50 фраз.\n",
+        "- Модель дообучается на вашем дикторском голосе.\n",
+        "- Готовый файл `my_voice.onnx` скачивается на устройство."
       ]
     },
     {
@@ -32,20 +33,21 @@ notebook = {
       "metadata": {},
       "outputs": [],
       "source": [
-        "!nvidia-smi\n",
+        "# Проверка GPU\n",
+        "!nvidia-smi || echo 'Запуск без nvidia-smi (будет проверен PyTorch)'\n",
         "\n",
         "# Системные пакеты\n",
         "!apt-get update -qq && apt-get install -y -qq espeak-ng ffmpeg build-essential git\n",
         "\n",
-        "# Установка сверхбыстрого менеджера uv и создание Python 3.10 venv\n",
-        "!curl -LsSf https://astral.sh/uv/install.sh | sh\n",
-        "!/root/.local/bin/uv venv --python 3.10 /content/env\n",
+        "# Установка uv и создание Python 3.10 venv\n",
+        "!pip install -q uv\n",
+        "!uv venv --python 3.10 /content/env\n",
         "\n",
-        "# Установка PyTorch с поддержкой CUDA\n",
+        "# Установка PyTorch с CUDA\n",
         "!/content/env/bin/pip install -q --upgrade pip\n",
         "!/content/env/bin/pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121\n",
         "\n",
-        "# Установка точных совместимых версий\n",
+        "# Установка зависимостей Piper\n",
         "!/content/env/bin/pip install -q pytorch-lightning==1.9.5 torchmetrics==0.11.4 piper-phonemize==1.1.0 'cython<3' onnx onnxruntime soundfile librosa piper-tts\n",
         "\n",
         "# Клонирование репозитория Piper\n",
@@ -144,13 +146,18 @@ notebook = {
         "extra_epochs = 1000\n",
         "target_max_epochs = base_epoch + extra_epochs\n",
         "\n",
+        "# Проверяем наличие GPU\n",
+        "gpu_check = \"import torch; print('gpu' if torch.cuda.is_available() else 'cpu')\"\n",
+        "accel = subprocess.check_output(['/content/env/bin/python', '-c', gpu_check]).decode().strip()\n",
+        "\n",
         "print(f'Базовая эпоха чекпоинта: {base_epoch}')\n",
         "print(f'Целевая конечная эпоха max_epochs: {target_max_epochs} (+{extra_epochs} эпох дообучения)')\n",
+        "print(f'Используемый ускоритель: {accel.upper()}')\n",
         "\n",
-        "# Запуск обучения на GPU T4\n",
+        "# Запуск обучения\n",
         "!/content/env/bin/python -m piper_train \\\n",
         "    --dataset-dir /content/training_dir \\\n",
-        "    --accelerator gpu \\\n",
+        "    --accelerator {accel} \\\n",
         "    --devices 1 \\\n",
         "    --batch-size 8 \\\n",
         "    --validation-split 0.0 \\\n",
@@ -231,4 +238,4 @@ notebook = {
 with open("/home/dev/piper-voice/Train_Piper_Voice.ipynb", "w", encoding="utf-8") as f:
     json.dump(notebook, f, ensure_ascii=False, indent=2)
 
-print("Train_Piper_Voice.ipynb regenerated successfully!")
+print("Regenerated Train_Piper_Voice.ipynb!")
