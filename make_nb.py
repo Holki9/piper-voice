@@ -9,9 +9,7 @@ notebook = {
       "source": [
         "# 🎙️ Piper TTS: Персональный офлайн-голос для Android\n",
         "\n",
-        "**Инструкция:**\n",
-        "1. Убедитесь, что выбран **T4 GPU**: `Среда выполнения` -> `Сменить тип среды выполнения` -> `T4 GPU` -> `Сохранить`.\n",
-        "2. Нажмите `Среда выполнения` -> `Выполнить все` (Runtime -> Run all).\n",
+        "**Инструкция: Нажмите `Среда выполнения` -> `Выполнить все` (Runtime -> Run all).**\n",
         "\n",
         "Обучение выполнится полностью автоматически:\n",
         "- Создается изолированная среда Python 3.10 с PyTorch и CUDA.\n",
@@ -33,22 +31,18 @@ notebook = {
       "metadata": {},
       "outputs": [],
       "source": [
-        "# Проверка GPU\n",
-        "!nvidia-smi || echo 'Запуск без nvidia-smi (будет проверен PyTorch)'\n",
-        "\n",
         "# Системные пакеты\n",
         "!apt-get update -qq && apt-get install -y -qq espeak-ng ffmpeg build-essential git\n",
         "\n",
-        "# Установка uv и создание Python 3.10 venv\n",
+        "# Установка uv и создание Python 3.10 venv с базовыми пакетами (seed)\n",
         "!pip install -q uv\n",
-        "!uv venv --python 3.10 /content/env\n",
+        "!uv venv --seed --python 3.10 /content/env\n",
         "\n",
-        "# Установка PyTorch с CUDA\n",
-        "!/content/env/bin/pip install -q --upgrade pip\n",
-        "!/content/env/bin/pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121\n",
+        "# Сверхбыстрая установка PyTorch с поддержкой CUDA\n",
+        "!uv pip install --python /content/env/bin/python torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121\n",
         "\n",
-        "# Установка зависимостей Piper\n",
-        "!/content/env/bin/pip install -q pytorch-lightning==1.9.5 torchmetrics==0.11.4 piper-phonemize==1.1.0 'cython<3' onnx onnxruntime soundfile librosa piper-tts\n",
+        "# Установка совместимых версий библиотек\n",
+        "!uv pip install --python /content/env/bin/python pytorch-lightning==1.9.5 torchmetrics==0.11.4 piper-phonemize==1.1.0 'cython<3' numpy onnx onnxruntime soundfile librosa piper-tts\n",
         "\n",
         "# Клонирование репозитория Piper\n",
         "import os\n",
@@ -59,10 +53,10 @@ notebook = {
         "!cd /content/piper/src/python/piper_train/vits/monotonic_align && /content/env/bin/python setup.py build_ext --inplace\n",
         "\n",
         "# Установка пакетов piper в venv\n",
-        "!/content/env/bin/pip install -q --no-deps -e /content/piper/src/python_run\n",
-        "!/content/env/bin/pip install -q --no-deps -e /content/piper/src/python\n",
+        "!uv pip install --python /content/env/bin/python --no-deps -e /content/piper/src/python_run\n",
+        "!uv pip install --python /content/env/bin/python --no-deps -e /content/piper/src/python\n",
         "\n",
-        "# Тестовая проверка всех импортов и CUDA\n",
+        "# Проверка работоспособности\n",
         "!/content/env/bin/python -c \"import torch, piper_train, piper_phonemize, pytorch_lightning; print('✓ CUDA активна:', torch.cuda.is_available()); print('✓ Окружение Python 3.10 полностью готово!')\""
       ]
     },
@@ -238,4 +232,4 @@ notebook = {
 with open("/home/dev/piper-voice/Train_Piper_Voice.ipynb", "w", encoding="utf-8") as f:
     json.dump(notebook, f, ensure_ascii=False, indent=2)
 
-print("Regenerated Train_Piper_Voice.ipynb!")
+print("Regenerated Train_Piper_Voice.ipynb with uv seed and uv pip install!")
