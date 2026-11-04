@@ -1,0 +1,56 @@
+name: Prepare Dataset
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'raw_audio/**'
+      - 'sentences.json'
+      - 'prepare_dataset.py'
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          pip install --upgrade pip
+          pip install openai-whisper
+
+      - name: Slice audio and create dataset
+        run: |
+          python prepare_dataset.py
+
+      - name: Validate dataset
+        run: |
+          echo "=== Dataset files ==="
+          ls -la dataset/wavs/ | head -n 15
+          echo "Total sliced wavs:"
+          ls -1 dataset/wavs/*.wav | wc -l
+          echo "=== Metadata preview ==="
+          head -n 10 dataset/metadata.csv
+
+      - name: Commit and push dataset
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add dataset/
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Auto-generate sliced dataset and metadata via Whisper"
+            git push origin main
+          fi
