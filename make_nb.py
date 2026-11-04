@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+import json
+
+notebook = {
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "# 🎙️ Piper TTS: Персональный офлайн-голос для Android\n",
+        "\n",
+        "**Инструкция: Нажмите `Среда выполнения` -> `Выполнить все` (Runtime -> Run all).**\n",
+        "Всё остальное выполнится автоматически:\n",
+        "1. Создается изолированная среда **Python 3.10** через `uv` (обход ограничений Colab Python 3.12/3.13).\n",
+        "2. Загружается готовый нарезанный датасет (50 фраз).\n",
+        "3. Скачивается базовый дикторский чекпоинт `ru_RU-dmitri-medium`.\n",
+        "4. Запускается дообучение (Fine-Tuning) на GPU T4.\n",
+        "5. Автоматически экспортируется файл `my_voice.onnx` (~60 МБ) и скачивается на устройство."
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## Шаг 1. Подготовка изолированного окружения Python 3.10 и библиотек"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": None,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "!nvidia-smi\n",
+        "\n",
+        "# Системные утилиты\n",
+        "!apt-get update -qq && apt-get install -y -qq espeak-ng ffmpeg build-essential git\n",
+        "\n",
+        "# Установка uv и создание Python 3.10 venv\n",
+        "!curl -LsSf https://astral.sh/uv/install.sh | sh\n",
+        "!/root/.local/bin/uv venv --python 3.10 /content/env\n",
+        "\n",
+        "# Установка PyTorch 2.1 с поддержкой CUDA 12.1\n",
+        "!/content/env/bin/pip install -q --upgrade pip\n",
+        "!/content/env/bin/pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121\n",
+        "\n",
+        "# Установка совместимых версий PyTorch Lightning, Piper и ONNX\n",
+        "!/content/env/bin/pip install -q pytorch-lightning==1.9.5 torchmetrics==0.11.4 piper-phonemize==1.1.0 'cython<3' onnx onnxruntime soundfile librosa piper-tts\n",
+        "\n",
+        "# Клонирование репозитория Piper\n",
+        "import os\n",
+        "if not os.path.exists('/content/piper'):\n",
+        "    !git clone --depth 1 https://github.com/rhasspy/piper.git /content/piper\n",
+        "\n",
+        "# Сборка C-расширения monotonic_align для VITS\n",
+        "!cd /content/piper/src/python/piper_train/vits/monotonic_align && /content/env/bin/python setup.py build_ext --inplace\n",
+        "\n",
+        "# Установка локальных пакетов piper в venv\n",
+        "!/content/env/bin/pip install -q --no-deps -e /content/piper/src/python_run\n",
+        "!/content/env/bin/pip install -q --no-deps -e /content/piper/src/python\n",
+        "\n",
+        "# Проверка работоспособности\n",
+        "!/content/env/bin/python -c \"import torch, piper_train, piper_phonemize, pytorch_lightning; print('✓ CUDA доступна:', torch.cuda.is_available()); print('✓ Окружение Python 3.10 полностью готово!')\""
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## Шаг 2. Загрузка вашего датасета и базовой модели"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": None,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "import os, shutil\n",
+        "\n",
+        "# Клонируем или обновляем репозиторий с аудио\n",
+        "if not os.path.exists('/content/piper-voice'):\n",
+        "    !git clone https://github.com/Holki9/piper-voice.git /content/piper-voice\n",
+        "else:\n",
+        "    !cd /content/piper-voice && git pull\n",
+        "\n",
+        "# Копируем датасет в рабочую директорию\n",
+        "if os.path.exists('/content/piper-voice/dataset'):\n",
+        "    !rm -rf /content/dataset\n",
+        "    !cp -r /content/piper-voice/dataset /content/dataset\n",
+        "    print('✓ Датасет скопирован!')\n",
+        "    !ls -la /content/dataset/wavs | head -n 10\n",
+        "\n",
+        "# Скачиваем базовую модель (Dmitri medium checkpoint)\n",
+        "!mkdir -p /content/base_model\n",
+        "!wget -q -c -O /content/base_model/dmitri.ckpt https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/main/ru/ru_RU/dmitri/medium/epoch%3D5589-step%3D1478840.ckpt\n",
+        "!wget -q -c -O /content/base_model/config.json https://huggingface.co/datasets/rhasspy/piper-checkpoints/resolve/main/ru/ru_RU/dmitri/medium/config.json\n",
+        "print('✓ Базовая модель Dmitri medium загружена!')"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## Шаг 3. Предобработка датасета (фонетизация espeak-ng)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": None,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "# Запуск предобработки\n",
+        "!/content/env/bin/python -m piper_train.preprocess \\\n",
+        "    --language ru \\\n",
+        "    --input-dir /content/dataset \\\n",
+        "    --output-dir /content/training_dir \\\n",
+        "    --dataset-format ljspeech \\\n",
+        "    --single-speaker \\\n",
+        "    --sample-rate 22050 \\\n",
+        "    --max-workers 2\n",
+        "\n",
+        "print('✓ Предобработка успешно завершена!')\n",
+        "!head -n 5 /content/training_dir/dataset.jsonl"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## Шаг 4. Обучение (Fine-Tuning)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": None,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "import torch\n",
+        "\n",
+        "# Определяем текущую эпоху чекпоинта\n",
+        "ckpt = torch.load('/content/base_model/dmitri.ckpt', map_location='cpu')\n",
+        "base_epoch = ckpt.get('epoch', 5589)\n",
+        "extra_epochs = 1000\n",
+        "target_max_epochs = base_epoch + extra_epochs\n",
+        "print(f'Базовая эпоха чекпоинта: {base_epoch}')\n",
+        "print(f'Целевая конечная эпоха max_epochs: {target_max_epochs} (+{extra_epochs} эпох дообучения)')\n",
+        "\n",
+        "# Запуск обучения\n",
+        "!/content/env/bin/python -m piper_train \\\n",
+        "    --dataset-dir /content/training_dir \\\n",
+        "    --accelerator gpu \\\n",
+        "    --devices 1 \\\n",
+        "    --batch-size 8 \\\n",
+        "    --validation-split 0.0 \\\n",
+        "    --num-test-examples 0 \\\n",
+        "    --max_epochs {target_max_epochs} \\\n",
+        "    --checkpoint-epochs 50 \\\n",
+        "    --precision 32 \\\n",
+        "    --quality medium \\\n",
+        "    --resume_from_checkpoint /content/base_model/dmitri.ckpt"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## Шаг 5. Экспорт в ONNX и тестирование голоса"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": None,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "import glob, os, shutil\n",
+        "from IPython.display import Audio, display\n",
+        "\n",
+        "# Поиск последнего сохраненного чекпоинта\n",
+        "ckpts = sorted(glob.glob('/content/training_dir/lightning_logs/**/checkpoints/*.ckpt', recursive=True), key=os.path.getmtime)\n",
+        "if not ckpts:\n",
+        "    ckpts = sorted(glob.glob('/content/training_dir/*.ckpt'), key=os.path.getmtime)\n",
+        "\n",
+        "best_ckpt = ckpts[-1]\n",
+        "print(f'Экспорт финального чекпоинта: {best_ckpt}')\n",
+        "\n",
+        "# Экспорт в ONNX\n",
+        "!/content/env/bin/python -m piper_train.export_onnx {best_ckpt} /content/my_voice.onnx\n",
+        "shutil.copy('/content/training_dir/config.json', '/content/my_voice.onnx.json')\n",
+        "\n",
+        "print('✓ Модель успешно экспортирована!')\n",
+        "!ls -lh /content/my_voice.onnx*\n",
+        "\n",
+        "# Тестовая генерация речи\n",
+        "test_text = 'Привет! Это мой персональный дикторский голос. Теперь я говорю полностью офлайн прямо на вашем устройстве.'\n",
+        "!echo '{test_text}' | /content/env/bin/piper --model /content/my_voice.onnx --config /content/my_voice.onnx.json --output_file /content/test.wav\n",
+        "\n",
+        "print('Слушайте результат синтеза:')\n",
+        "display(Audio('/content/test.wav'))\n",
+        "\n",
+        "# Скачивание файлов модели\n",
+        "from google.colab import files\n",
+        "print('Скачивание модели...')\n",
+        "files.download('/content/my_voice.onnx')\n",
+        "files.download('/content/my_voice.onnx.json')"
+      ]
+    }
+  ],
+  "metadata": {
+    "accelerator": "GPU",
+    "colab": {
+      "gpuType": "T4",
+      "provenance": []
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 0
+}
+
+with open("/home/dev/piper-voice/Train_Piper_Voice.ipynb", "w", encoding="utf-8") as f:
+    json.dump(notebook, f, ensure_ascii=False, indent=2)
+
+print("Train_Piper_Voice.ipynb successfully updated!")
