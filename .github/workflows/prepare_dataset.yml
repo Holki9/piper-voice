@@ -52,5 +52,6 @@ jobs:
             echo "No changes to commit."
           else
             git commit -m "Auto-generate sliced dataset and metadata via Whisper"
+            git pull --rebase origin main
             git push origin main
           fi
